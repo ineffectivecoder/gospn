@@ -11,7 +11,7 @@ import "testing"
 func TestNBFXRoundTrip(t *testing.T) {
 	filter := "(&(samAccountType=805306368)(servicePrincipalName=*)(!(sAMAccountName=krbtgt)))"
 	baseDN := "DC=corp,DC=example,DC=com"
-	msg := buildEnumerate("dc01.corp.example.com", filter, baseDN, adwsRoastAttrs, newUUID())
+	msg := buildEnumerate("dc01.corp.example.com", filter, baseDN, adwsRoastAttrs, newUUID(), "ldap:389")
 
 	root, err := decodeNBFSE(msg)
 	if err != nil {

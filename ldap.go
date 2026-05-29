@@ -45,9 +45,15 @@ func searchRoastableUsersLDAP(cfg *Config) ([]roastTarget, error) {
 	}
 	defer conn.Close()
 
-	baseDN, err := defaultNamingContext(conn)
-	if err != nil {
-		return nil, err
+	// The Global Catalog holds partial replicas of every domain in the forest;
+	// searching from an empty base with subtree scope enumerates them all. For a
+	// normal DC bind, scope to the domain naming context.
+	baseDN := ""
+	if !cfg.UseGC {
+		var err error
+		if baseDN, err = defaultNamingContext(conn); err != nil {
+			return nil, err
+		}
 	}
 
 	filter := buildUserFilter(cfg)
@@ -110,13 +116,24 @@ func connectAndBindLDAP(cfg *Config) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-// dialLDAP opens an LDAP or LDAPS connection to the configured DC.
+// dialLDAP opens an LDAP or LDAPS connection to the configured DC. With -gc it
+// targets the Global Catalog ports (3268/3269) instead of the domain LDAP ports
+// (389/636), giving a forest-wide, read-only partial view.
 func dialLDAP(cfg *Config) (*ldap.Conn, error) {
+	port := 389
+	if cfg.UseGC {
+		port = 3268
+	}
 	if cfg.UseLDAPS {
-		url := fmt.Sprintf("ldaps://%s:636", cfg.DC)
+		if cfg.UseGC {
+			port = 3269
+		} else {
+			port = 636
+		}
+		url := fmt.Sprintf("ldaps://%s:%d", cfg.DC, port)
 		return ldap.DialURL(url, ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: true}))
 	}
-	return ldap.DialURL(fmt.Sprintf("ldap://%s:389", cfg.DC))
+	return ldap.DialURL(fmt.Sprintf("ldap://%s:%d", cfg.DC, port))
 }
 
 // defaultNamingContext reads the domain naming context from RootDSE.

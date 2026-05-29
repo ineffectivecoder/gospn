@@ -28,6 +28,13 @@ For authorized security testing, CTFs, and lab use only.
   raises **no RC4-downgrade signal** (the #1 Kerberoasting detection, Event 4769
   enc-type `0x17` on an AES-capable account). Accounts with the attribute unset
   are still targeted. Mirrors Rubeus `/rc4opsec`.
+- **`-gc`** — query the **forest-wide Global Catalog** (LDAP ports 3268/3269)
+  instead of a single domain. Finds roastable SPNs across every domain in the
+  forest in one shot, and uses a different port/service than the DC's `:389`.
+  Requires `-method ldap` (ADWS rejects GC instance queries). Note: the GC holds
+  only a *partial* attribute set, so `pwdLastSet` (and possibly
+  `msDS-SupportedEncryptionTypes`) may be blank, which makes `-rc4opsec` less
+  reliable in GC mode (GoSPN warns when both are combined).
 - **Rubeus-style flags** — accepts `/flag` and `/flag:value` in addition to
   `-flag`; unrecognized arguments are reported, not silently dropped.
 - `-stats`, `-outfile`, `-ldaps`, `-ldapfilter`, `-domain`, `-dc`, `-nobanner`.
@@ -41,6 +48,7 @@ gospn -method ldap -user svc_sql         Roast only the svc_sql account
 gospn -spn MSSQLSvc/db:1433              Roast one explicit SPN (no enumeration)
 gospn -method ldap -tgtdeleg             Roast everyone, forcing RC4 via tgtdeleg
 gospn -method adws -rc4opsec             Roast only RC4-native accounts (no downgrade signal)
+gospn -method ldap -gc                   Roast across the whole forest via the Global Catalog
 gospn -method adws -outfile out.txt      Write hashes to a file
 gospn -method ldap -stats                List roastable accounts only
 ```

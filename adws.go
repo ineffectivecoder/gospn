@@ -41,7 +41,15 @@ var adwsRoastAttrs = []string{
 // Web Services (TCP 9389) using WS-Enumeration, mirroring the LDAP backend.
 func searchRoastableUsersADWS(cfg *Config) ([]roastTarget, error) {
 	spn := "HOST/" + cfg.DC
+	// ADWS selects the directory instance via the <ad:instance> header: the
+	// domain LDAP server ("ldap:389") or the forest-wide Global Catalog
+	// ("gc:3268"). The GC search uses an empty base object to span all domains.
 	baseDN := domainToBaseDN(cfg.Domain)
+	instance := "ldap:389"
+	if cfg.UseGC {
+		instance = "gc:3268"
+		baseDN = ""
+	}
 	filter := buildUserFilter(cfg)
 
 	conn, err := dialADWS(cfg.DC, spn, "Windows/Enumeration")
@@ -51,7 +59,7 @@ func searchRoastableUsersADWS(cfg *Config) ([]roastTarget, error) {
 	defer conn.Close()
 
 	// 1. Enumerate: establish a result set and obtain its context token.
-	if err := conn.sendEnvelope(buildEnumerate(cfg.DC, filter, baseDN, adwsRoastAttrs, newUUID())); err != nil {
+	if err := conn.sendEnvelope(buildEnumerate(cfg.DC, filter, baseDN, adwsRoastAttrs, newUUID(), instance)); err != nil {
 		return nil, fmt.Errorf("sending ADWS Enumerate: %w", err)
 	}
 	respBytes, err := conn.recvEnvelope()
@@ -73,7 +81,7 @@ func searchRoastableUsersADWS(cfg *Config) ([]roastTarget, error) {
 	// 2. Pull repeatedly until the server signals EndOfSequence.
 	var targets []roastTarget
 	for i := 0; i < 1000; i++ {
-		if err := conn.sendEnvelope(buildPull(cfg.DC, enumCtx, newUUID())); err != nil {
+		if err := conn.sendEnvelope(buildPull(cfg.DC, enumCtx, newUUID(), instance)); err != nil {
 			return nil, fmt.Errorf("sending ADWS Pull: %w", err)
 		}
 		pullBytes, err := conn.recvEnvelope()
@@ -166,13 +174,13 @@ func soapFault(root *nbfxNode) string {
 }
 
 // buildEnumerate builds the WS-Enumeration Enumerate request as NBFSE bytes.
-func buildEnumerate(fqdn, filter, baseDN string, attrs []string, msgID string) []byte {
+func buildEnumerate(fqdn, filter, baseDN string, attrs []string, msgID, instance string) []byte {
 	w := &nbfxWriter{}
 	w.startElem("s", "Envelope")
 	envelopeNamespaces(w)
 
 	w.startElem("s", "Header")
-	headerCommon(w, actionEnumerate, msgID, fqdn)
+	headerCommon(w, actionEnumerate, msgID, fqdn, instance)
 	w.endElem() // Header
 
 	w.startElem("s", "Body")
@@ -211,13 +219,13 @@ func buildEnumerate(fqdn, filter, baseDN string, attrs []string, msgID string) [
 }
 
 // buildPull builds the WS-Enumeration Pull request as NBFSE bytes.
-func buildPull(fqdn, enumCtx, msgID string) []byte {
+func buildPull(fqdn, enumCtx, msgID, instance string) []byte {
 	w := &nbfxWriter{}
 	w.startElem("s", "Envelope")
 	envelopeNamespaces(w)
 
 	w.startElem("s", "Header")
-	headerCommon(w, actionPull, msgID, fqdn)
+	headerCommon(w, actionPull, msgID, fqdn, instance)
 	w.endElem()
 
 	w.startElem("s", "Body")
@@ -244,14 +252,14 @@ func envelopeNamespaces(w *nbfxWriter) {
 	w.xmlns("xsi", nsXSI)
 }
 
-func headerCommon(w *nbfxWriter, action, msgID, fqdn string) {
+func headerCommon(w *nbfxWriter, action, msgID, fqdn, instance string) {
 	w.startElem("a", "Action")
 	w.attr("s", "mustUnderstand", "1")
 	w.text(action)
 	w.endElem()
 
 	w.startElem("ad", "instance")
-	w.text("ldap:389")
+	w.text(instance)
 	w.endElem()
 
 	w.startElem("a", "MessageID")

