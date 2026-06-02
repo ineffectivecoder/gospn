@@ -35,7 +35,11 @@ func searchRoastableUsersLDAP(cfg *Config) ([]roastTarget, error) {
 		// satisfies the "channel already protected" requirement, so fall back.
 		if !cfg.UseLDAPS && ldap.IsErrorAnyOf(err,
 			ldap.LDAPResultStrongAuthRequired, ldap.LDAPResultConfidentialityRequired) {
-			fmt.Print("[*] DC requires signing for plaintext LDAP; retrying over LDAPS (636)\r\n")
+			ldapsPort := 636
+			if cfg.UseGC {
+				ldapsPort = 3269
+			}
+			fmt.Printf("[*] DC requires signing; retrying over LDAPS (%d)\r\n", ldapsPort)
 			cfg.UseLDAPS = true
 			conn, err = connectAndBindLDAP(cfg)
 		}
@@ -109,7 +113,11 @@ func connectAndBindLDAP(cfg *Config) (*ldap.Conn, error) {
 	}
 	defer gssClient.Close()
 
-	if err := conn.GSSAPIBind(gssClient, "ldap/"+cfg.DC, ""); err != nil {
+	spnPrefix := "ldap"
+	if cfg.UseGC {
+		spnPrefix = "gc"
+	}
+	if err := conn.GSSAPIBind(gssClient, spnPrefix+"/"+cfg.DC, ""); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("LDAP GSSAPI bind to %s failed: %w", cfg.DC, err)
 	}
