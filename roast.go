@@ -207,6 +207,13 @@ func resolveDomainAndDC(cfg *Config) error {
 		cfg.Domain = os.Getenv("USERDNSDOMAIN")
 	}
 	if cfg.Domain == "" {
+		// USERDNSDOMAIN is absent for service accounts (e.g. NETWORK SERVICE).
+		// Fall back to the machine-level LSA policy which works for any logon.
+		if d, err := getDomainFromLSA(); err == nil {
+			cfg.Domain = d
+		}
+	}
+	if cfg.Domain == "" {
 		return fmt.Errorf("could not determine domain; specify -domain (machine may not be domain-joined)")
 	}
 	cfg.Domain = strings.ToLower(cfg.Domain)

@@ -27,6 +27,12 @@ var (
 	procLsaCallAuthenticationPackage   = secur32DLL.NewProc("LsaCallAuthenticationPackage")
 	procLsaFreeReturnBuffer            = secur32DLL.NewProc("LsaFreeReturnBuffer")
 	procLsaDeregisterLogonProcess      = secur32DLL.NewProc("LsaDeregisterLogonProcess")
+
+	advapi32DLL            = syscall.NewLazyDLL("advapi32.dll")
+	procLsaOpenPolicy      = advapi32DLL.NewProc("LsaOpenPolicy")
+	procLsaQueryInfoPolicy = advapi32DLL.NewProc("LsaQueryInformationPolicy")
+	procLsaFreeMemory      = advapi32DLL.NewProc("LsaFreeMemory")
+	procLsaClose           = advapi32DLL.NewProc("LsaClose")
 )
 
 // KERB_PROTOCOL_MESSAGE_TYPE
@@ -160,4 +166,51 @@ func parseExternalTicketSessionKey(base unsafe.Pointer) (types.EncryptionKey, er
 	key.KeyType = keyType
 	key.KeyValue = keyVal
 	return key, nil
+}
+
+// getDomainFromLSA reads the machine's DNS domain name from the LSA policy.
+// Works for any account (including NETWORK SERVICE) unlike USERDNSDOMAIN which
+// is only set for interactive domain logons.
+func getDomainFromLSA() (string, error) {
+	// LSA_OBJECT_ATTRIBUTES on x64: Length(4)+pad(4)+RootDir(8)+ObjName(8)+Attrs(4)+pad(4)+SecDesc(8)+SecQoS(8) = 48 bytes.
+	// Zeroed except Length = sizeof.
+	var objAttrs [48]byte
+	*(*uint32)(unsafe.Pointer(&objAttrs[0])) = 48
+
+	var handle uintptr
+	if st, _, _ := procLsaOpenPolicy.Call(
+		0, // NULL = local system
+		uintptr(unsafe.Pointer(&objAttrs[0])),
+		0x00000001, // POLICY_VIEW_LOCAL_INFORMATION
+		uintptr(unsafe.Pointer(&handle)),
+	); st != 0 {
+		return "", fmt.Errorf("LsaOpenPolicy: NTSTATUS 0x%x", st)
+	}
+	defer procLsaClose.Call(handle)
+
+	var info unsafe.Pointer
+	if st, _, _ := procLsaQueryInfoPolicy.Call(
+		handle,
+		12, // PolicyDnsDomainInformation
+		uintptr(unsafe.Pointer(&info)),
+	); st != 0 {
+		return "", fmt.Errorf("LsaQueryInformationPolicy: NTSTATUS 0x%x", st)
+	}
+	defer procLsaFreeMemory.Call(uintptr(info))
+
+	if info == nil {
+		return "", fmt.Errorf("no domain information returned")
+	}
+
+	// POLICY_DNS_DOMAIN_INFO layout on x64:
+	//   Offset  0: Name          (LSA_UNICODE_STRING, 16 bytes)
+	//   Offset 16: DnsDomainName (LSA_UNICODE_STRING, 16 bytes)
+	// LSA_UNICODE_STRING: Length(2) MaxLen(2) [pad 4] Buffer*(8)
+	dnsLen := *(*uint16)(unsafe.Add(info, 16))
+	dnsBuf := *(*uintptr)(unsafe.Add(info, 24))
+	if dnsLen == 0 || dnsBuf == 0 {
+		return "", fmt.Errorf("machine is not domain-joined")
+	}
+	chars := unsafe.Slice((*uint16)(unsafe.Pointer(dnsBuf)), dnsLen/2)
+	return syscall.UTF16ToString(chars), nil
 }
