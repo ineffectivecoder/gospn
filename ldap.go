@@ -113,11 +113,7 @@ func connectAndBindLDAP(cfg *Config) (*ldap.Conn, error) {
 	}
 	defer gssClient.Close()
 
-	spnPrefix := "ldap"
-	if cfg.UseGC {
-		spnPrefix = "gc"
-	}
-	if err := conn.GSSAPIBind(gssClient, spnPrefix+"/"+cfg.DC, ""); err != nil {
+	if err := conn.GSSAPIBind(gssClient, "ldap/"+cfg.DC, ""); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("LDAP GSSAPI bind to %s failed: %w", cfg.DC, err)
 	}
